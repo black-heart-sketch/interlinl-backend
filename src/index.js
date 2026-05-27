@@ -46,9 +46,11 @@ const CONFIG = {
       'http://localhost:5174',
       'http://localhost:5175',
       'http://localhost:5176',
-      'http://13.60.239.54:5001',
+      'http://13.60.239.54:5004',
       'http://13.60.239.54:7880',
-      'http://13.60.239.54'
+      'http://13.60.239.54',
+      'http://13.60.239.54:5002',
+      'http://13.60.239.54:5003',
       
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
