@@ -76,17 +76,21 @@ const toDigipayError = (error, fallbackMessage) => {
 
 const initiatePayIn = async ({ amount, customerPhone, customerEmail, metadata, webhookUrl }) => {
   const normalizedPhone = normalizePhone(customerPhone);
+  console.log(`[DigiPay Utility] initiatePayIn called - Amount: ${amount}, Phone: ${normalizedPhone}, Email: ${customerEmail}, Webhook: ${webhookUrl}`);
 
   try {
     const sdk = await getClient();
-    return await sdk.payments.initiate({
+    const result = await sdk.payments.initiate({
       amount,
       customerPhone: normalizedPhone,
       customerEmail,
       metadata,
       webhookUrl
     });
+    console.log('[DigiPay Utility] initiatePayIn response received:', result);
+    return result;
   } catch (error) {
+    console.error('[DigiPay Utility] initiatePayIn error occurred:', error);
     throw toDigipayError(error, 'Unable to initiate DigiPay payment. Please verify the phone number and amount.');
   }
 };
@@ -103,24 +107,32 @@ const buildWebhookUrl = (req) => {
 };
 
 const getTransactionStatus = async (transactionId) => {
+  console.log(`[DigiPay Utility] getTransactionStatus called for transaction: ${transactionId}`);
   try {
     const sdk = await getClient();
-    return await sdk.payments.getStatus(transactionId);
+    const statusResult = await sdk.payments.getStatus(transactionId);
+    console.log(`[DigiPay Utility] getTransactionStatus response for ${transactionId}:`, statusResult);
+    return statusResult;
   } catch (error) {
+    console.error(`[DigiPay Utility] getTransactionStatus error for ${transactionId}:`, error);
     throw toDigipayError(error, 'Unable to get DigiPay transaction status.');
   }
 };
 
 const requestPayout = async ({ amount, recipientPhone }) => {
   const normalizedPhone = normalizePhone(recipientPhone);
+  console.log(`[DigiPay Utility] requestPayout called - Amount: ${amount}, Recipient: ${normalizedPhone}`);
 
   try {
     const sdk = await getClient();
-    return await sdk.settlements.requestPayout({
+    const result = await sdk.settlements.requestPayout({
       amount,
       recipientPhone: normalizedPhone
     });
+    console.log('[DigiPay Utility] requestPayout response received:', result);
+    return result;
   } catch (error) {
+    console.error('[DigiPay Utility] requestPayout error occurred:', error);
     throw toDigipayError(error, 'Unable to request DigiPay payout. Please verify the phone number and amount.');
   }
 };
