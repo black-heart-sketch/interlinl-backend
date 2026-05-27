@@ -22,8 +22,7 @@ const liveClassSchema = new mongoose.Schema({
   },
   participants: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   studyLanguage: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'StudyLanguage',
+    type: String,
     required: function requireStudyLanguage() {
       return this.audience === 'study_language';
     }

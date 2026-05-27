@@ -3,6 +3,14 @@ const Redis = require('ioredis');
 const mongoose = require('mongoose');
 
 let redisClient = null;
+const FRONTEND_LANGUAGE_CODES = ['en', 'de', 'fr', 'it'];
+const WARMUP_PREFIXES = ['partner', 'testimonial', 'program', 'event', 'research', 'institute', 'activity'];
+
+function normalizeLanguageCode(lang) {
+  if (!lang || typeof lang !== 'string') return null;
+  const normalized = lang.split('-')[0].toLowerCase();
+  return FRONTEND_LANGUAGE_CODES.includes(normalized) ? normalized : null;
+}
 
 const connectRedis = () => {
   return new Promise((resolve, reject) => {
@@ -34,7 +42,8 @@ const TRANSLATABLE_FIELDS = [
 ];
 
 async function deepTranslate(data, targetLang) {
-  if (!data || !targetLang) return data;
+  const normalizedTargetLang = normalizeLanguageCode(targetLang);
+  if (!data || !normalizedTargetLang) return data;
   
   const stringsToTranslate = [];
   const mapList = []; 
@@ -67,7 +76,7 @@ async function deepTranslate(data, targetLang) {
   if (stringsToTranslate.length === 0) return clonedData;
 
   try {
-    const results = await translate(stringsToTranslate, { to: targetLang });
+    const results = await translate(stringsToTranslate, { to: normalizedTargetLang });
     const translatedArray = Array.isArray(results) ? results : [results];
 
     for (let i = 0; i < translatedArray.length; i++) {
@@ -83,7 +92,8 @@ async function deepTranslate(data, targetLang) {
 }
 
 exports.getCachedOrTranslated = async (reqKey, targetLang, fetchCallback) => {
-  const cacheKey = `translation:${reqKey}:${targetLang || 'default'}`;
+  const normalizedTargetLang = normalizeLanguageCode(targetLang);
+  const cacheKey = `translation:${reqKey}:${normalizedTargetLang || 'default'}`;
 
   // Try Redis first
   if (redisClient && redisClient.status === 'ready') {
@@ -98,10 +108,10 @@ exports.getCachedOrTranslated = async (reqKey, targetLang, fetchCallback) => {
   // Fetch original DB data
   const rawData = await fetchCallback();
   
-  if (!targetLang) return rawData; // If no lang provided, return raw
+  if (!normalizedTargetLang) return rawData; // If no supported lang provided, return raw
 
   // Translate
-  const translatedData = await deepTranslate(rawData, targetLang);
+  const translatedData = await deepTranslate(rawData, normalizedTargetLang);
 
   // Save to Cache (24 hours = 86400 seconds)
   if (redisClient && redisClient.status === 'ready') {
@@ -123,35 +133,19 @@ function getModel(modelName) {
     try {
       return require(`../models/${modelName}`);
     } catch (requireErr) {
-      try {
-        return require(`../isolated/models/${modelName}`);
-      } catch (isolatedErr) {
-        console.error(`⚠️ Failed to resolve model "${modelName}":`, isolatedErr.message);
-        return null;
-      }
+      return null;
     }
   }
 }
 
-// Queries dynamic languages from DB or defaults to frontend codes
+// Mirrors the language selected in the frontend i18n switcher.
 async function getActiveLanguageCodes() {
-  try {
-    const StudyLanguage = getModel('StudyLanguage');
-    if (StudyLanguage) {
-      const langs = await StudyLanguage.find({ isActive: true });
-      if (langs.length > 0) {
-        const codes = langs.map(l => l.code.toLowerCase());
-        const defaults = ['en', 'de', 'fr', 'it'];
-        return Array.from(new Set([...codes, ...defaults]));
-      }
-    }
-  } catch (err) {
-    console.error('⚠️ StudyLanguage query failed, using defaults:', err.message);
-  }
-  return ['en', 'de', 'fr', 'it'];
+  return FRONTEND_LANGUAGE_CODES;
 }
 
 exports.warmupCollection = async (prefix, targetLang = null) => {
+  if (!WARMUP_PREFIXES.includes(prefix)) return;
+
   if (!targetLang) {
     const langs = await getActiveLanguageCodes();
     for (const lang of langs) {
@@ -435,8 +429,7 @@ exports.warmupCollection = async (prefix, targetLang = null) => {
 
 exports.warmupAll = async () => {
   console.log('🔥 Initializing dynamic database pre-translation cache warm-up...');
-  const prefixes = ['partner', 'testimonial', 'program', 'course', 'event', 'library', 'research', 'institute', 'activity', 'quiz'];
-  for (const prefix of prefixes) {
+  for (const prefix of WARMUP_PREFIXES) {
     try {
       await exports.warmupCollection(prefix);
     } catch (err) {

@@ -76,8 +76,15 @@ const io = socket.init(server);
 
 // Database Manager
 class DatabaseManager {
+  static listenersRegistered = false;
+  static healthCheckInterval = null;
+
   static async connect() {
     if (connectionState.status === 'connecting') return;
+    if (mongoose.connection.readyState === 1) {
+      await this.handleSuccessfulConnection();
+      return;
+    }
 
     connectionState.status = 'connecting';
     const uri = process.env.MONGODB_URI || process.env.MONGO_URI;
@@ -113,8 +120,11 @@ class DatabaseManager {
     featureFlags.useDatabaseFeatures = true;
     dbEventEmitter.emit('db:connected');
 
-    mongoose.connection.on('error', this.handleConnectionError.bind(this));
-    mongoose.connection.on('disconnected', this.handleDisconnection.bind(this));
+    if (!this.listenersRegistered) {
+      mongoose.connection.on('error', this.handleConnectionError.bind(this));
+      mongoose.connection.on('disconnected', this.handleDisconnection.bind(this));
+      this.listenersRegistered = true;
+    }
   }
 
   static async handleConnectionError(err) {
@@ -149,7 +159,9 @@ class DatabaseManager {
   }
 
   static startHealthCheck() {
-    setInterval(async () => {
+    if (this.healthCheckInterval) return;
+
+    this.healthCheckInterval = setInterval(async () => {
       if (mongoose.connection.readyState !== 1) {
         dbEventEmitter.emit('db:unhealthy');
         await this.connect();

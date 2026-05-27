@@ -9,7 +9,7 @@ const { buildWebhookUrl, getTransactionStatus, initiatePayIn } = require('../uti
 
 const registerUser = async (req, res) => {
   try {
-    const { firstName, lastName, email, password, phone, studyLanguage, class: classId, department } = req.body;
+    const { firstName, lastName, email, password, phone, class: classId, department } = req.body;
 
     if (!firstName || !lastName || !email || !password) {
       return res.status(400).json({ message: 'All fields are required' });
@@ -40,7 +40,6 @@ const registerUser = async (req, res) => {
       passwordHash: hashedPassword,
       role: 'student',
       status: 'active',
-      studyLanguage: studyLanguage || null,
       class: classId || null,
       department: department || 'none'
     });
@@ -61,7 +60,7 @@ const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email }).populate('studyLanguage', 'name code').populate('class', 'name section level');
+    const user = await User.findOne({ email }).populate('class', 'name section level');
 
     if (user && user.passwordHash && (await bcrypt.compare(password, user.passwordHash))) {
       if (user.status === 'pending') {
@@ -81,7 +80,6 @@ const loginUser = async (req, res) => {
         role: user.role,
         status: user.status,
         phone: user.phone,
-        studyLanguage: user.studyLanguage,
         class: user.class,
         token: generateToken(user._id)
       });
@@ -200,7 +198,6 @@ const getRegistrationPaymentStatus = async (req, res) => {
 const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      .populate('studyLanguage', 'name code')
       .populate('class', 'name section level');
     if (!user) {
       return res.status(404).json({ message: 'User not found' });

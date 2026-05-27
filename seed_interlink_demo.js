@@ -25,7 +25,7 @@ async function run() {
   const admin = await upsertUser({ firstName: 'InterLink', lastName: 'Admin', email: 'admin@interlink.local', role: 'superadmin', department: 'Software Engineering' });
   const supervisor = await upsertUser({ firstName: 'Amina', lastName: 'Supervisor', email: 'supervisor@interlink.local', role: 'supervisor', department: 'Software Engineering' });
   const student = await upsertUser({ firstName: 'Demo', lastName: 'Intern', email: 'student@interlink.local', role: 'student', department: 'Software Engineering' });
-
+  
   await Internship.findOneAndUpdate(
     { student: student._id },
     { student: student._id, supervisor: supervisor._id, department: 'Software Engineering', status: 'active', progress: 45, attendanceRate: 92 },

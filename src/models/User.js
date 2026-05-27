@@ -30,11 +30,10 @@ const userSchema = new mongoose.Schema(
     },
     language: {
       type: String,
-      enum: ['fr', 'de', 'en'],
+      enum: ['fr', 'de', 'en', 'it'],
       default: 'fr'
     },
     avatar: String,
-    studyLanguage: { type: mongoose.Schema.Types.ObjectId, ref: 'StudyLanguage' },
     department: {
       type: String,
       enum: ['Software Engineering', 'Cybersecurity', 'AI Development', 'IoT Engineering', 'Graphic Design', 'Web & Mobile Development', 'none'],

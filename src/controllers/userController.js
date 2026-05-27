@@ -12,7 +12,6 @@ exports.getUsers = async (req, res) => {
     if (req.query.status) filter.status = req.query.status;
     const users = await User.find(filter)
       .select('-passwordHash')
-      .populate('studyLanguage', 'name code')
       .sort({ createdAt: -1 });
     res.status(200).json(users);
   } catch (error) {
@@ -36,13 +35,12 @@ exports.validateUser = async (req, res) => {
 
 exports.updateUser = async (req, res) => {
   try {
-    const { status, role, studyLanguage, studyMode, registeredLevel } = req.body;
+    const { status, role, studyMode, registeredLevel } = req.body;
     const user = await User.findByIdAndUpdate(
       req.params.id,
       {
         ...(status && { status }),
         ...(role && { role }),
-        ...(studyLanguage !== undefined && { studyLanguage }),
         ...(studyMode !== undefined && { studyMode }),
         ...(registeredLevel !== undefined && { registeredLevel })
       },
@@ -66,7 +64,7 @@ exports.deleteUser = async (req, res) => {
 
 exports.createUser = async (req, res) => {
   try {
-    const { firstName, lastName, email, password, role, phone, status, studyLanguage, studyMode, registeredLevel } = req.body;
+    const { firstName, lastName, email, password, role, phone, status, studyMode, registeredLevel } = req.body;
     if (!email || !password) return res.status(400).json({ message: 'Email and password required' });
     const exists = await User.findOne({ email });
     if (exists) return res.status(400).json({ message: 'User already exists' });
@@ -76,7 +74,6 @@ exports.createUser = async (req, res) => {
       firstName, lastName, email, phone,
       role: role || 'student',
       status: status || 'active',
-      studyLanguage: studyLanguage || null,
       studyMode: studyMode || 'online',
       registeredLevel: registeredLevel || 'none',
       passwordHash
@@ -90,7 +87,7 @@ exports.createUser = async (req, res) => {
 exports.updateProfile = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { firstName, lastName, email, phone, password, language, studyLanguage } = req.body;
+    const { firstName, lastName, email, phone, password, language } = req.body;
 
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: 'User not found' });
@@ -104,7 +101,6 @@ exports.updateProfile = async (req, res) => {
     }
     if (phone !== undefined) user.phone = phone;
     if (language !== undefined) user.language = language;
-    if (studyLanguage !== undefined) user.studyLanguage = studyLanguage || null;
 
     if (password) {
       const salt = await bcrypt.genSalt(10);
@@ -128,7 +124,7 @@ exports.updateProfile = async (req, res) => {
     await user.save();
     
     // Populate studyLanguage before sending back
-    const populatedUser = await User.findById(userId).populate('studyLanguage', 'name code').select('-passwordHash');
+    const populatedUser = await User.findById(userId).select('-passwordHash');
 
     res.status(200).json(populatedUser);
   } catch (error) {

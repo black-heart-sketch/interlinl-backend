@@ -1,5 +1,5 @@
 const Payment = require('../models/Payment');
-const Enrollment = require('../isolated/models/Enrollment');
+const Enrollment = require('../models/Enrollment');
 const { checkBalance, requestPayout } = require('../utils/digipay');
 
 const createPayment = async (req, res) => {
