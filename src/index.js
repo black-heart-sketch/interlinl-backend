@@ -323,7 +323,7 @@ async function startApplication() {
     
     AppConfig.initialize(app);
     
-    server.listen(CONFIG.server.PORT, () => {
+    server.listen(CONFIG.server.PORT, '0.0.0.0', () => {
       console.log(`📡 Server running on port ${CONFIG.server.PORT}`);
     });
 
