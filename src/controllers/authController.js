@@ -9,7 +9,7 @@ const { buildWebhookUrl, getTransactionStatus, initiatePayIn } = require('../uti
 
 const registerUser = async (req, res) => {
   try {
-    const { firstName, lastName, email, password, phone, studyLanguage, studyMode, transactionId, class: classId, department, paymentOption } = req.body;
+    const { firstName, lastName, email, password, phone, studyLanguage, class: classId, department } = req.body;
 
     if (!firstName || !lastName || !email || !password) {
       return res.status(400).json({ message: 'All fields are required' });
@@ -28,68 +28,10 @@ const registerUser = async (req, res) => {
       return res.status(400).json({ message: 'User already exists' });
     }
 
-    const mode = studyMode === 'on_site' ? 'on_site' : 'online';
-    const chosenPaymentOption = paymentOption || 'pay_now';
-
-    const requireFeeSetting = await Setting.findOne({ key: 'requireOnlineRegistrationFee' });
-    const requireFee = requireFeeSetting ? requireFeeSetting.value === true || requireFeeSetting.value === 'true' : true;
-
-    let userStatus = 'pending';
-    let appPaymentStatus = 'pending';
-
-    if (requireFee && chosenPaymentOption !== 'pay_later') {
-      if (!transactionId) {
-        return res.status(400).json({ message: 'DigiPay Transaction ID is required for registration' });
-      }
-
-      // Verify transaction is completed
-      let isPaid = false;
-      if (transactionId.startsWith('dp_tx_')) {
-        isPaid = true;
-      } else {
-        try {
-          const txn = await getTransactionStatus(transactionId);
-          const txnStatus = String(txn?.status || '').toLowerCase();
-          if (['completed', 'success', 'successful'].includes(txnStatus)) {
-            isPaid = true;
-          }
-        } catch (err) {
-          return res.status(400).json({ message: 'Failed to verify payment transaction ID' });
-        }
-      }
-
-      if (!isPaid) {
-        return res.status(400).json({ message: 'Registration fee payment is not completed or failed' });
-      }
-
-      // Since they successfully paid, their account is active and application is paid immediately!
-      userStatus = 'active';
-      appPaymentStatus = 'paid';
-    } else {
-      // Either no fee required, or they chose to pay later (which makes userStatus = 'pending' by default)
-      userStatus = requireFee && chosenPaymentOption === 'pay_later' ? 'pending' : 'active';
-      appPaymentStatus = requireFee && chosenPaymentOption === 'pay_later' ? 'pending' : 'paid';
-    }
-
-    // Handle CV/resume upload (if exists)
-    let resumeUrl = null;
-    if (req.processedFile) {
-      const finalDir = path.join(__dirname, '../../assets/receipts');
-      const finalPath = path.join(finalDir, req.processedFile.fileName);
-      await moveFile(req.processedFile.path, finalPath);
-      resumeUrl = `/receipts/${req.processedFile.fileName}`;
-
-      // Move the generated thumbnail if it exists
-      if (req.processedFile.thumbnailPath) {
-        const finalThumbPath = path.join(finalDir, req.processedFile.thumbnailFilename);
-        await moveFile(req.processedFile.thumbnailPath, finalThumbPath);
-      }
-    }
-
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // 1. Create the base User
+    // Create the User - active by default so they can log in and be gated on the dashboard
     const user = await User.create({
       firstName,
       lastName,
@@ -97,37 +39,18 @@ const registerUser = async (req, res) => {
       phone,
       passwordHash: hashedPassword,
       role: 'student',
-      status: userStatus,
+      status: 'active',
       studyLanguage: studyLanguage || null,
       class: classId || null,
       department: department || 'none'
     });
 
-    // 2. Create the InternshipApplication
-    const InternshipApplication = require('../models/InternshipApplication');
-    const application = await InternshipApplication.create({
-      user: user._id,
-      department: department || 'none',
-      studyMode: mode,
-      paymentOption: chosenPaymentOption,
-      paymentStatus: appPaymentStatus,
-      transactionId: transactionId || null,
-      resumeUrl,
-      status: 'pending' // pending review
-    });
-
-    const successMessage = chosenPaymentOption === 'pay_later'
-      ? 'Registration successful. Your application is pending registration fee payment.'
-      : 'Registration successful. Your application is now pending admin review!';
-
     res.status(201).json({
       _id: user._id,
       email: user.email,
       status: user.status,
-      studyMode: application.studyMode,
       class: user.class,
-      applicationId: application._id,
-      message: successMessage
+      message: 'Registration successful. Please log in to complete your onboarding.'
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -184,8 +107,20 @@ const initiateRegistrationPayment = async (req, res) => {
 
     console.log(`Initiating DigiPay registration fee pay-in of ${feeAmount} FCFA to phone ${phone}`);
 
-    // If using the default test key, we can simulate a successful transaction initiation
-    if (process.env.DIGIPAY_API_KEY === 'dpk_test_einstein' || !process.env.DIGIPAY_API_KEY) {
+    // Query settings for custom key, then env fallback
+    let apiKey = null;
+    try {
+      const keySetting = await Setting.findOne({ key: 'digipayApiKey' });
+      if (keySetting && keySetting.value) {
+        apiKey = String(keySetting.value).trim();
+      }
+    } catch {}
+    if (!apiKey) {
+      apiKey = process.env.DIGIPAY_API_KEY;
+    }
+
+    // If using the default test key or mock sandbox key, simulate successful transaction
+    if (apiKey === 'dpk_test_einstein' || !apiKey || apiKey.startsWith('dpk_test_')) {
       const mockTxId = 'dp_tx_' + Math.random().toString(36).substr(2, 9);
       return res.status(200).json({
         success: true,
@@ -224,20 +159,34 @@ const getRegistrationPaymentStatus = async (req, res) => {
   try {
     const { transactionId } = req.params;
 
+    let isCompleted = false;
+    let txnAmount = 5000;
+
     if (transactionId.startsWith('dp_tx_')) {
       // Sandbox mock
-      return res.status(200).json({
-        status: 'completed',
-        amount: 5000,
-        reference: transactionId
-      });
+      isCompleted = true;
+    } else {
+      const txn = await getTransactionStatus(transactionId);
+      const txnStatus = String(txn?.status || '').toLowerCase();
+      txnAmount = txn?.amount || 5000;
+      if (['completed', 'success', 'successful'].includes(txnStatus)) {
+        isCompleted = true;
+      }
     }
 
-    const txn = await getTransactionStatus(transactionId);
+    if (isCompleted) {
+      const InternshipApplication = require('../models/InternshipApplication');
+      const app = await InternshipApplication.findOne({ transactionId });
+      if (app && app.paymentStatus !== 'paid') {
+        app.paymentStatus = 'paid';
+        await app.save();
+      }
+    }
+
     res.status(200).json({
-      status: txn.status,
-      amount: txn.amount,
-      reference: txn.reference
+      status: isCompleted ? 'completed' : 'pending',
+      amount: txnAmount,
+      reference: transactionId
     });
   } catch (error) {
     console.error('Error fetching DigiPay status:', error);

@@ -9,6 +9,8 @@ router.get('/partners', publicController.getActivePartners);
 router.get('/testimonials', publicController.getVerifiedTestimonials);
 router.get('/events', publicController.getPublishedEvents);
 router.get('/gallery', publicController.getLiveGallery);
+router.get('/services', publicController.getPublicServices);
+router.get('/projects', publicController.getPublicProjects);
 router.post('/contact', publicController.submitContactForm);
 
 module.exports = router;

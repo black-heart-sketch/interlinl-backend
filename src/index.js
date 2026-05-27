@@ -210,8 +210,6 @@ class AppConfig {
     
     app.use(express.static(path.join(__dirname, 'views')));
     
-    // Suited names for Institute Einstein
-    app.use('/institutes', express.static(path.join(assetsPath, 'images/institutes')));
     app.use('/users', express.static(path.join(assetsPath, 'images/users')));
     app.use('/research', express.static(path.join(assetsPath, 'images/research/thumbnail')));
     app.use('/research-docs', express.static(path.join(assetsPath, 'documents/research')));
@@ -221,17 +219,12 @@ class AppConfig {
     app.use('/course/doc', express.static(path.join(assetsPath, 'documents/courses/thumbnails')));
     // General /assets route so stored paths like /assets/images/... resolve correctly
     app.use('/assets', express.static(assetsPath));
+    app.use('/reports', isAuth, express.static(path.join(assetsPath, 'documents/reports')));
     app.use('/media', express.static(path.join(assetsPath, 'images/media')));
     app.use('/events', express.static(path.join(assetsPath, 'images/events')));
     app.use('/library', isAuth, express.static(path.join(assetsPath, 'library')));
     app.use('/receipts', isAuth, roleCheck(['superadmin', 'admin']), express.static(path.join(assetsPath, 'receipts')));
     
-    // Protected static files
-    app.use('/documents/institutes',
-      isAuth,
-      roleCheck(['SystemAdmin', 'InstituteAdmin']),
-      express.static(path.join(assetsPath, 'documents/institutes'))
-    );
   }
 
   static setupRoutes(app) {
@@ -343,6 +336,7 @@ async function startApplication() {
         
         socketClient.on('join_room', ({ roomId, userId, username, avatar }) => {
             socketClient.join(roomId);
+            if (userId) socketClient.join(`user:${userId}`);
             socketClient.roomId = roomId;
             socketClient.userId = userId;
             
@@ -350,6 +344,16 @@ async function startApplication() {
             activeRooms[roomId][userId] = { userId, username, avatar, socketId: socketClient.id };
             
             io.to(roomId).emit('room_users', Object.values(activeRooms[roomId]));
+        });
+
+        socketClient.on('identify_user', ({ userId }) => {
+            if (!userId) return;
+            socketClient.userId = userId;
+            socketClient.join(`user:${userId}`);
+        });
+
+        socketClient.on('typing', ({ receiverId, senderId }) => {
+            if (receiverId) socketClient.to(`user:${receiverId}`).emit('message:typing', { senderId });
         });
 
         socketClient.on('send_msg', ({ roomId, sender, text }) => {

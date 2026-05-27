@@ -1,25 +1,55 @@
 const { DigiPay } = require('digipay-sdk');
 
 let client;
+let cachedApiKey;
+let cachedEnv;
 
-const getClient = () => {
-  if (client) return client;
+const getClient = async () => {
+  const Setting = require('../models/Setting');
+  let apiKey = null;
+  let env = null;
 
-  const apiKey = process.env.DIGIPAY_API_KEY;
-  if (!apiKey) {
-    throw new Error('DIGIPAY_API_KEY is not configured.');
+  try {
+    const keySetting = await Setting.findOne({ key: 'digipayApiKey' });
+    if (keySetting && keySetting.value) {
+      apiKey = String(keySetting.value).trim();
+    }
+    const envSetting = await Setting.findOne({ key: 'digipayEnv' });
+    if (envSetting && envSetting.value) {
+      env = String(envSetting.value).trim();
+    }
+  } catch (err) {
+    console.error('Error reading DigiPay settings from database:', err);
   }
 
-  client = new DigiPay({
-    apiKey,
-    environment: process.env.DIGIPAY_ENV || 'production'
-  });
+  // Fallbacks
+  if (!apiKey) {
+    apiKey = process.env.DIGIPAY_API_KEY;
+  }
+  if (!env) {
+    env = process.env.DIGIPAY_ENV || 'production';
+  }
+
+  if (!apiKey) {
+    throw new Error('DIGIPAY_API_KEY is not configured in database or environment.');
+  }
+
+  // Re-initialize if changed
+  if (!client || cachedApiKey !== apiKey || cachedEnv !== env) {
+    cachedApiKey = apiKey;
+    cachedEnv = env;
+    client = new DigiPay({
+      apiKey,
+      environment: env
+    });
+  }
 
   return client;
 };
 
 const checkBalance = async () => {
-  return getClient().settlements.getBalance();
+  const sdk = await getClient();
+  return sdk.settlements.getBalance();
 };
 
 const normalizePhone = (phone) => {
@@ -48,7 +78,8 @@ const initiatePayIn = async ({ amount, customerPhone, customerEmail, metadata, w
   const normalizedPhone = normalizePhone(customerPhone);
 
   try {
-    return await getClient().payments.initiate({
+    const sdk = await getClient();
+    return await sdk.payments.initiate({
       amount,
       customerPhone: normalizedPhone,
       customerEmail,
@@ -73,7 +104,8 @@ const buildWebhookUrl = (req) => {
 
 const getTransactionStatus = async (transactionId) => {
   try {
-    return await getClient().payments.getStatus(transactionId);
+    const sdk = await getClient();
+    return await sdk.payments.getStatus(transactionId);
   } catch (error) {
     throw toDigipayError(error, 'Unable to get DigiPay transaction status.');
   }
@@ -83,7 +115,8 @@ const requestPayout = async ({ amount, recipientPhone }) => {
   const normalizedPhone = normalizePhone(recipientPhone);
 
   try {
-    return await getClient().settlements.requestPayout({
+    const sdk = await getClient();
+    return await sdk.settlements.requestPayout({
       amount,
       recipientPhone: normalizedPhone
     });

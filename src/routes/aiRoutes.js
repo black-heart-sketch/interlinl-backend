@@ -1,31 +1,14 @@
 const express = require('express');
-const {
-  generateMcqController,
-  courseAssistantController,
-  getChapterCanvasController,
-  saveChapterProgressController,
-  generateChapterCanvasController,
-  generateChapterPracticeQuizController,
-  submitChapterPracticeQuizController,
-  getCourseExamController,
-  generateCourseExamController,
-  updateCourseExamController,
-  submitCourseExamController
-} = require('../controllers/aiController');
+const interlinkAi = require('../controllers/interlinkAiController');
 const { isAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.post('/generate-mcq', isAuth, generateMcqController);
-router.post('/course-assistant', isAuth, courseAssistantController);
-router.get('/chapter-canvas', isAuth, getChapterCanvasController);
-router.post('/chapter-canvas', isAuth, generateChapterCanvasController);
-router.post('/chapter-canvas/progress', isAuth, saveChapterProgressController);
-router.post('/chapter-canvas/practice-quiz', isAuth, generateChapterPracticeQuizController);
-router.post('/chapter-canvas/practice-quiz/submit', isAuth, submitChapterPracticeQuizController);
-router.get('/courses/:courseId/exam', isAuth, getCourseExamController);
-router.post('/courses/exam/generate', isAuth, generateCourseExamController);
-router.put('/courses/:courseId/exam', isAuth, updateCourseExamController);
-router.post('/courses/:courseId/exam/submit', isAuth, submitCourseExamController);
+router.post('/generate-report', isAuth, interlinkAi.generateReport);
+router.post('/review-report', isAuth, interlinkAi.reviewReport);
+router.post('/task-suggestions', isAuth, interlinkAi.taskSuggestions);
+router.post('/performance-analysis', isAuth, interlinkAi.performanceAnalysis);
+router.post('/final-summary', isAuth, interlinkAi.finalSummary);
+router.post('/chat', isAuth, interlinkAi.chat);
 
 module.exports = router;

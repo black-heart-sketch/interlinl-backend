@@ -4,6 +4,8 @@ const internshipApplicationController = require('../controllers/internshipApplic
 const { protect, authorize } = require('../middleware/authMiddleware');
 
 router.get('/', protect, authorize('admin', 'superadmin', 'manager', 'supervisor'), internshipApplicationController.getApplications);
+router.get('/me', protect, internshipApplicationController.getMyApplication);
+router.patch('/me/transaction', protect, internshipApplicationController.updateMyApplicationTransaction);
 router.post('/', protect, internshipApplicationController.createApplication);
 router.get('/:id', protect, internshipApplicationController.getApplicationById);
 router.patch('/:id/approve', protect, authorize('admin', 'superadmin', 'manager'), internshipApplicationController.approveApplication);

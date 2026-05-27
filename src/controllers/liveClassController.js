@@ -4,6 +4,7 @@ const { AccessToken } = require('livekit-server-sdk');
 const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
+const { notifyMany } = require('../services/notificationService');
 
 // In a real app, these should be in process.env
 const GROQ_API_KEY = process.env.GROQ_API_KEY || 'test-key';
@@ -27,11 +28,13 @@ exports.getLiveClasses = async (req, res) => {
       const access = [{ audience: 'all_users' }];
       if (req.user.studyLanguage) access.push({ audience: 'study_language', studyLanguage: req.user.studyLanguage });
       if (isTeacher) access.push({ teacher: req.user._id });
+      access.push({ audience: 'internship_pair', participants: req.user._id });
       filter.$or = access;
     }
 
     const classes = await LiveClass.find(filter)
       .populate('teacher', 'firstName lastName email')
+      .populate('participants', 'firstName lastName email role avatar')
       .populate('studyLanguage', 'name code')
       .sort({ scheduledStartTime: 1 });
       
@@ -43,10 +46,13 @@ exports.getLiveClasses = async (req, res) => {
 
 exports.createLiveClass = async (req, res) => {
   try {
-    const { title, description, type = 'course', audience = 'study_language', studyLanguage, teacher, scheduledStartTime, scheduledEndTime } = req.body;
+    const { title, description, type = 'course', audience = 'study_language', studyLanguage, teacher, scheduledStartTime, scheduledEndTime, participants = [] } = req.body;
 
     if (audience === 'study_language' && !studyLanguage) {
       return res.status(400).json({ message: 'Study language is required for language-specific sessions.' });
+    }
+    if (audience === 'internship_pair' && (!Array.isArray(participants) || participants.length === 0)) {
+      return res.status(400).json({ message: 'Participants are required for internship video sessions.' });
     }
 
     if (new Date(scheduledEndTime) <= new Date(scheduledStartTime)) {
@@ -63,6 +69,7 @@ exports.createLiveClass = async (req, res) => {
       audience,
       studyLanguage: audience === 'study_language' ? studyLanguage : undefined,
       teacher: type === 'course' ? (teacher || req.user._id) : (teacher || undefined),
+      participants: audience === 'internship_pair' ? participants : [],
       scheduledStartTime,
       scheduledEndTime,
       meetingId,
@@ -72,6 +79,17 @@ exports.createLiveClass = async (req, res) => {
     // TODO: Send notifications/emails to all students with matching studyLanguage
     // For now, we simulate this logging
     console.log(`[Notification] Scheduled new class: ${title} for language ${studyLanguage}`);
+
+    if (audience === 'internship_pair') {
+      await notifyMany(participants.map((recipient) => ({
+        recipient,
+        actor: req.user._id,
+        type: 'video-call',
+        title: 'Video session scheduled',
+        message: title,
+        link: `/live/${meetingId}`,
+      })));
+    }
 
     res.status(201).json(newClass);
   } catch (error) {
@@ -84,10 +102,14 @@ exports.updateLiveClass = async (req, res) => {
     if (req.body.audience === 'study_language' && !req.body.studyLanguage) {
       return res.status(400).json({ message: 'Study language is required for language-specific sessions.' });
     }
+    if (req.body.audience === 'internship_pair' && (!Array.isArray(req.body.participants) || req.body.participants.length === 0)) {
+      return res.status(400).json({ message: 'Participants are required for internship video sessions.' });
+    }
     if (req.body.scheduledStartTime && req.body.scheduledEndTime && new Date(req.body.scheduledEndTime) <= new Date(req.body.scheduledStartTime)) {
       return res.status(400).json({ message: 'End time must be after start time.' });
     }
     if (req.body.audience === 'all_users') req.body.studyLanguage = undefined;
+    if (req.body.audience !== 'internship_pair') req.body.participants = [];
     const updated = await LiveClass.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!updated) return res.status(404).json({ message: 'Live class not found' });
     res.status(200).json(updated);
@@ -122,9 +144,10 @@ exports.getJoinToken = async (req, res) => {
     const isTeacher = liveClass.teacher && liveClass.teacher.toString() === user._id.toString();
     const isAdmin = ['superadmin', 'admin', 'systemadmin', 'instituteadmin'].includes(userRole);
     const isAllUsers = liveClass.audience === 'all_users';
+    const isParticipant = (liveClass.participants || []).some((participant) => participant.toString() === user._id.toString());
     const isStudentInLang = liveClass.studyLanguage && user.studyLanguage && user.studyLanguage.toString() === liveClass.studyLanguage.toString();
 
-    if (!isTeacher && !isAdmin && !isAllUsers && !isStudentInLang) {
+    if (!isTeacher && !isAdmin && !isAllUsers && !isStudentInLang && !isParticipant) {
       return res.status(403).json({ message: 'You do not have access to this scheduled session' });
     }
 

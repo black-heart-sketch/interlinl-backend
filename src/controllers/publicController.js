@@ -4,6 +4,8 @@ const Testimonial = require('../models/Testimonial');
 const Lead = require('../models/Lead');
 const Event = require('../models/Event');
 const MediaAsset = require('../models/MediaAsset');
+const Service = require('../models/Service');
+const Project = require('../models/Project');
 const translationService = require('../services/translationService');
 
 const getPublishedPrograms = async (req, res) => {
@@ -116,6 +118,22 @@ const getLiveGallery = async (req, res) => {
   }
 };
 
+const getPublicServices = async (req, res) => {
+  try {
+    res.json(await Service.find({ status: 'published' }).sort({ order: 1, createdAt: -1 }));
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching services', error: error.message });
+  }
+};
+
+const getPublicProjects = async (req, res) => {
+  try {
+    res.json(await Project.find({ status: 'published' }).sort({ featured: -1, createdAt: -1 }));
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching projects', error: error.message });
+  }
+};
+
 module.exports = {
   getPublishedPrograms,
   getProgramBySlug,
@@ -123,5 +141,7 @@ module.exports = {
   getVerifiedTestimonials,
   submitContactForm,
   getPublishedEvents,
-  getLiveGallery
+  getLiveGallery,
+  getPublicServices,
+  getPublicProjects
 };

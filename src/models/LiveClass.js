@@ -12,14 +12,15 @@ const liveClassSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['course', 'conference', 'webinar'],
+    enum: ['course', 'conference', 'webinar', 'mentorship'],
     default: 'course'
   },
   audience: {
     type: String,
-    enum: ['study_language', 'all_users'],
+    enum: ['study_language', 'all_users', 'internship_pair'],
     default: 'study_language'
   },
+  participants: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   studyLanguage: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'StudyLanguage',

@@ -1,8 +1,102 @@
 const Report = require('../models/Report');
 const Internship = require('../models/Internship');
+const { moveFile } = require('../middleware/multer');
+const { GoogleGenAI } = require('@google/genai');
+const { createNotification } = require('../services/notificationService');
+const path = require('path');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const normalizeRole = (role) => String(role || '').toLowerCase();
+const PRIVILEGED_ROLES = ['admin', 'superadmin', 'manager'];
+
+const getUserNameFields = 'firstName lastName email avatar department role';
+
+const parseDate = (value) => (value ? new Date(value) : null);
+
+const safeNumber = (value, fallback = null) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const isReportOwner = (report, userId) => String(report.intern) === String(userId);
+
+const canViewReport = (report, user) => {
+  const role = normalizeRole(user.role);
+  return (
+    PRIVILEGED_ROLES.includes(role) ||
+    isReportOwner(report, user._id) ||
+    String(report.supervisor || '') === String(user._id)
+  );
+};
+
+const buildAttachmentPayload = async (processedFiles = []) => {
+  const files = Array.isArray(processedFiles) ? processedFiles : [];
+  const finalDir = path.join(__dirname, '../assets/documents/reports');
+  const attachments = [];
+
+  for (const file of files.filter((item) => item.fieldName === 'attachments')) {
+    const finalPath = path.join(finalDir, file.fileName);
+    await moveFile(file.path, finalPath);
+
+    let thumbnailUrl = '';
+    if (file.thumbnailPath && file.thumbnailFilename) {
+      const finalThumbPath = path.join(finalDir, file.thumbnailFilename);
+      await moveFile(file.thumbnailPath, finalThumbPath);
+      thumbnailUrl = `/assets/documents/reports/${file.thumbnailFilename}`;
+    }
+
+    attachments.push({
+      name: file.originalName || file.fileName,
+      url: `/assets/documents/reports/${file.fileName}`,
+      type: file.type || 'file',
+      size: file.fileSize || 0,
+      thumbnailUrl,
+    });
+  }
+
+  return attachments;
+};
+
+const getGeminiText = async (prompt) => {
+  if (!process.env.GEMINI_API_KEY) return null;
+
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const response = await ai.models.generateContent({
+    model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+    contents: prompt,
+    config: {
+      temperature: 0.35,
+      maxOutputTokens: 1200,
+      responseMimeType: 'application/json',
+    },
+  });
+
+  return response.text || null;
+};
+
+const extractJson = (raw) => {
+  if (!raw) return null;
+  const cleaned = String(raw).replace(/```(?:json)?\s*([\s\S]*?)\s*```/, '$1').trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start >= 0 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
+  }
+  return null;
+};
+
+const fallbackAiReport = ({ type, notes, achievements, blockers, nextSteps }) => ({
+  title: `${String(type || 'daily').replace(/^\w/, (c) => c.toUpperCase())} Internship Report`,
+  content: [
+    notes || 'Today I worked on my assigned internship activities and documented the main outcomes.',
+    achievements ? `Key achievements: ${achievements}` : '',
+  ].filter(Boolean).join('\n\n'),
+  challenges: blockers || 'No major blockers were encountered during this reporting period.',
+  nextSteps: nextSteps || 'Continue with the next assigned activities and request support where needed.',
+});
 
 // ── GET /api/reports ──────────────────────────────────────────────────────────
 const getReports = async (req, res) => {
@@ -23,8 +117,9 @@ const getReports = async (req, res) => {
     if (req.query.internId) filter.intern = req.query.internId;
 
     const reports = await Report.find(filter)
-      .populate('intern', 'firstName lastName email avatar department')
-      .populate('supervisor', 'firstName lastName email')
+      .populate('intern', getUserNameFields)
+      .populate('supervisor', getUserNameFields)
+      .populate('reviewedBy', 'firstName lastName email')
       .sort({ createdAt: -1 });
 
     res.json(reports);
@@ -37,10 +132,14 @@ const getReports = async (req, res) => {
 const getReportById = async (req, res) => {
   try {
     const report = await Report.findById(req.params.id)
-      .populate('intern', 'firstName lastName email avatar department')
-      .populate('supervisor', 'firstName lastName email');
+      .populate('intern', getUserNameFields)
+      .populate('supervisor', getUserNameFields)
+      .populate('reviewedBy', 'firstName lastName email');
 
     if (!report) return res.status(404).json({ message: 'Report not found' });
+    if (!canViewReport(report, req.user)) {
+      return res.status(403).json({ message: 'You are not authorized to view this report.' });
+    }
     res.json(report);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -56,12 +155,18 @@ const createReport = async (req, res) => {
       return res.status(400).json({ message: 'Type, title, and content are required.' });
     }
 
+    if (!['daily', 'weekly', 'final'].includes(type)) {
+      return res.status(400).json({ message: 'Report type must be daily, weekly, or final.' });
+    }
+
     // Infer supervisor from active internship if not provided
     let supervisorId = req.body.supervisorId || null;
     if (!supervisorId) {
-      const internship = await Internship.findOne({ student: req.user._id });
+      const internship = await Internship.findOne({ student: req.user._id, status: 'active' });
       if (internship) supervisorId = internship.supervisor;
     }
+
+    const attachments = await buildAttachmentPayload(req.processedFiles);
 
     const report = await Report.create({
       intern: req.user._id,
@@ -72,11 +177,23 @@ const createReport = async (req, res) => {
       challenges: challenges || '',
       nextSteps: nextSteps || '',
       attachmentUrl: attachmentUrl || '',
-      periodStart: periodStart ? new Date(periodStart) : null,
-      periodEnd: periodEnd ? new Date(periodEnd) : null,
-      week: week || null,
+      attachments,
+      periodStart: parseDate(periodStart),
+      periodEnd: parseDate(periodEnd),
+      week: safeNumber(week),
       status: 'pending',
     });
+
+    if (supervisorId) {
+      await createNotification({
+        recipient: supervisorId,
+        actor: req.user._id,
+        type: 'report',
+        title: 'New report submitted',
+        message: title,
+        link: '/dashboard?view=reports',
+      });
+    }
 
     res.status(201).json(report);
   } catch (error) {
@@ -104,9 +221,14 @@ const updateReport = async (req, res) => {
     if (challenges !== undefined) report.challenges = challenges;
     if (nextSteps !== undefined) report.nextSteps = nextSteps;
     if (attachmentUrl !== undefined) report.attachmentUrl = attachmentUrl;
-    if (periodStart !== undefined) report.periodStart = periodStart ? new Date(periodStart) : null;
-    if (periodEnd !== undefined) report.periodEnd = periodEnd ? new Date(periodEnd) : null;
-    if (week !== undefined) report.week = week || null;
+    if (periodStart !== undefined) report.periodStart = parseDate(periodStart);
+    if (periodEnd !== undefined) report.periodEnd = parseDate(periodEnd);
+    if (week !== undefined) report.week = safeNumber(week);
+
+    const attachments = await buildAttachmentPayload(req.processedFiles);
+    if (attachments.length > 0) {
+      report.attachments = [...(report.attachments || []), ...attachments];
+    }
 
     await report.save();
     res.json(report);
@@ -119,23 +241,84 @@ const updateReport = async (req, res) => {
 // Supervisor scores and approves or rejects a report
 const reviewReport = async (req, res) => {
   try {
-    const { score, feedback, action } = req.body; // action: 'approve' | 'reject'
+    const { score, feedback, action } = req.body; // action: 'approve' | 'reject' | 'review'
 
-    if (!action || !['approve', 'reject'].includes(action)) {
-      return res.status(400).json({ message: "action must be 'approve' or 'reject'." });
+    if (!action || !['approve', 'reject', 'review'].includes(action)) {
+      return res.status(400).json({ message: "action must be 'approve', 'reject', or 'review'." });
     }
 
     const report = await Report.findById(req.params.id);
     if (!report) return res.status(404).json({ message: 'Report not found' });
 
-    report.status = action === 'approve' ? 'approved' : 'rejected';
+    const role = normalizeRole(req.user.role);
+    const isAssignedSupervisor = String(report.supervisor || '') === String(req.user._id);
+    const canClaimUnassignedReport = !report.supervisor && ['supervisor', 'teacher', 'advisor'].includes(role);
+    if (!PRIVILEGED_ROLES.includes(role) && !isAssignedSupervisor && !canClaimUnassignedReport) {
+      return res.status(403).json({ message: 'Only the assigned supervisor or an admin can review this report.' });
+    }
+
+    report.status = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'reviewed';
     report.feedback = feedback || '';
-    if (score !== undefined) report.score = Number(score);
+    if (score !== undefined) report.score = safeNumber(score, report.score);
     if (!report.supervisor) report.supervisor = req.user._id;
+    report.reviewedBy = req.user._id;
+    report.reviewedAt = new Date();
 
     await report.save();
 
+    await createNotification({
+      recipient: report.intern,
+      actor: req.user._id,
+      type: 'feedback',
+      title: `Report ${report.status}`,
+      message: report.feedback || `Your report was marked ${report.status}.`,
+      link: '/dashboard?view=reports',
+    });
+
     res.json({ message: `Report ${report.status}.`, report });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ── POST /api/reports/generate-ai ─────────────────────────────────────────────
+const generateAiReport = async (req, res) => {
+  try {
+    const {
+      type = 'daily',
+      notes = '',
+      achievements = '',
+      blockers = '',
+      nextSteps = '',
+      tone = 'professional',
+    } = req.body;
+
+    if (!['daily', 'weekly', 'final'].includes(type)) {
+      return res.status(400).json({ message: 'Report type must be daily, weekly, or final.' });
+    }
+
+    const prompt = `
+Generate an internship ${type} report for the InterLink platform.
+Return strict JSON with title, content, challenges, and nextSteps fields only.
+Tone: ${tone}.
+Raw notes: ${notes || 'Not provided'}.
+Achievements: ${achievements || 'Not provided'}.
+Blockers: ${blockers || 'Not provided'}.
+Planned next steps: ${nextSteps || 'Not provided'}.
+Keep it concise, professional, and suitable for supervisor review.
+`;
+
+    let generated = null;
+    try {
+      generated = extractJson(await getGeminiText(prompt));
+    } catch (error) {
+      console.warn('AI report generation fallback used:', error.message);
+    }
+
+    res.json({
+      source: generated ? 'ai' : 'fallback',
+      report: generated || fallbackAiReport({ type, notes, achievements, blockers, nextSteps }),
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -171,5 +354,6 @@ module.exports = {
   createReport,
   updateReport,
   reviewReport,
+  generateAiReport,
   deleteReport,
 };

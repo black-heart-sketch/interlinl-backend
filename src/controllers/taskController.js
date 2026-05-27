@@ -1,6 +1,7 @@
 const Task = require('../models/Task');
 const User = require('../models/User');
 const Internship = require('../models/Internship');
+const { createNotification } = require('../services/notificationService');
 
 const getTasks = async (req, res) => {
   try {
@@ -74,6 +75,25 @@ const createTask = async (req, res) => {
       await internship.save();
     }
 
+    await createNotification({
+      recipient: internId,
+      actor: req.user._id,
+      type: 'task',
+      title: 'New task assigned',
+      message: title,
+      link: '/dashboard?view=tasks',
+    });
+    if (deadline) {
+      await createNotification({
+        recipient: internId,
+        actor: req.user._id,
+        type: 'deadline',
+        title: 'Task deadline set',
+        message: `${title} is due on ${new Date(deadline).toLocaleDateString()}.`,
+        link: '/dashboard?view=tasks',
+      });
+    }
+
     res.status(201).json(task);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -95,6 +115,15 @@ const updateTask = async (req, res) => {
     if (deadline !== undefined) task.deadline = deadline ? new Date(deadline) : null;
 
     await task.save();
+
+    await createNotification({
+      recipient: task.intern,
+      actor: req.user._id,
+      type: 'feedback',
+      title: 'Task approved',
+      message: feedback || 'Your task was approved.',
+      link: '/dashboard?view=tasks',
+    });
     res.json(task);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -175,6 +204,15 @@ const rejectTask = async (req, res) => {
     task.status = 'rejected';
     task.feedback = feedback || 'Revision required.';
     await task.save();
+
+    await createNotification({
+      recipient: task.intern,
+      actor: req.user._id,
+      type: 'feedback',
+      title: 'Task revision requested',
+      message: task.feedback,
+      link: '/dashboard?view=tasks',
+    });
 
     res.json({ message: 'Task marked for revision.', task });
   } catch (error) {

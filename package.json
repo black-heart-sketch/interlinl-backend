@@ -5,13 +5,8 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "seed": "node seed_all.js",
-    "seed:admin": "node seed_admin.js",
-    "seed:data": "node seed_data.js",
-    "seed:ai-exams": "node seed_ai_exams.js",
-    "seed:testimonials": "node seed_testimonials.js",
-    "seed:gallery": "node seed_gallery.js",
-    "seed:quizzes": "node seed_quizzes.js"
+    "seed": "node seed_interlink_demo.js",
+    "seed:interlink": "node seed_interlink_demo.js"
   },
   "dependencies": {
     "@google/genai": "^2.6.0",
@@ -34,9 +29,7 @@
     "mongoose": "^8.5.1",
     "multer": "^2.1.1",
     "sharp": "^0.34.5",
-    "socket.io": "^4.7.5",
-    "winston": "^3.19.0",
-    "zod": "^4.4.3"
+    "socket.io": "^4.7.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"

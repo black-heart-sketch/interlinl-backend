@@ -1,6 +1,7 @@
 const InternshipApplication = require('../models/InternshipApplication');
 const User = require('../models/User');
 const Internship = require('../models/Internship');
+const { createNotification } = require('../services/notificationService');
 
 const getApplications = async (req, res) => {
   try {
@@ -98,6 +99,17 @@ const approveApplication = async (req, res) => {
       await internship.save();
     }
 
+    if (user?._id) {
+      await createNotification({
+        recipient: user._id,
+        actor: req.user._id,
+        type: 'application',
+        title: 'Application approved',
+        message: 'Your internship application was approved and your internship is active.',
+        link: '/student/dashboard',
+      });
+    }
+
     res.json({ 
       message: 'Application approved successfully, student account activated, and internship initialized.', 
       internship 
@@ -119,7 +131,46 @@ const rejectApplication = async (req, res) => {
     application.status = 'rejected';
     await application.save();
 
+    if (application.user) {
+      await createNotification({
+        recipient: application.user,
+        actor: req.user._id,
+        type: 'application',
+        title: 'Application rejected',
+        message: 'Your internship application was not approved.',
+        link: '/student/dashboard',
+      });
+    }
+
     res.json({ message: 'Application rejected.' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getMyApplication = async (req, res) => {
+  try {
+    const application = await InternshipApplication.findOne({ user: req.user._id });
+    res.json(application);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const updateMyApplicationTransaction = async (req, res) => {
+  try {
+    const { transactionId } = req.body;
+    if (!transactionId) {
+      return res.status(400).json({ message: 'Transaction ID is required' });
+    }
+    const application = await InternshipApplication.findOne({ user: req.user._id });
+    if (!application) {
+      return res.status(404).json({ message: 'Application not found' });
+    }
+    application.transactionId = transactionId;
+    application.paymentStatus = 'pending';
+    await application.save();
+    res.json(application);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -130,5 +181,7 @@ module.exports = {
   getApplicationById,
   createApplication,
   approveApplication,
-  rejectApplication
+  rejectApplication,
+  getMyApplication,
+  updateMyApplicationTransaction
 };
