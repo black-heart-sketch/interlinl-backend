@@ -40,6 +40,12 @@ const userSchema = new mongoose.Schema(
       default: 'none'
     },
     class: { type: mongoose.Schema.Types.ObjectId, ref: 'Class' },
+    platformAccessOverride: {
+      type: Boolean,
+      default: false
+    },
+    referralCode: { type: mongoose.Schema.Types.ObjectId, ref: 'ReferralCode' },
+    referralCodeSnapshot: String,
     resetPasswordToken: String,
     resetPasswordExpire: Date,
     viewedResearch: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Research' }],

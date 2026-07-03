@@ -10,6 +10,8 @@ router.use(protect);
 router.get('/', authorize('admin', 'superadmin', 'advisor'), paymentController.getPayments);
 router.get('/digipay/balance', authorize('admin', 'superadmin'), paymentController.getDigipayBalance);
 router.post('/digipay/payouts', authorize('admin', 'superadmin'), paymentController.createDigipayPayout);
+router.get('/internship/me', authorize('student'), paymentController.getMyInternshipPaymentSummary);
+router.post('/internship/installment', authorize('student'), paymentController.initiateInternshipInstallment);
 router.post('/', authorize('admin', 'superadmin'), paymentController.createPayment);
 router.get('/:id', authorize('admin', 'superadmin', 'student'), paymentController.getPaymentById);
 router.put('/:id', authorize('admin', 'superadmin'), paymentController.updatePayment);

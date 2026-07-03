@@ -7,6 +7,7 @@ router.get('/', protect, taskController.getTasks);
 router.post('/', protect, authorize('supervisor', 'admin', 'superadmin'), taskController.createTask);
 router.get('/:id', protect, taskController.getTaskById);
 router.patch('/:id', protect, authorize('supervisor', 'admin', 'superadmin'), taskController.updateTask);
+router.delete('/:id', protect, authorize('admin', 'superadmin'), taskController.deleteTask);
 router.patch('/:id/start', protect, taskController.startTask);
 router.patch('/:id/submit', protect, taskController.submitTask);
 router.patch('/:id/approve', protect, authorize('supervisor', 'admin', 'superadmin'), taskController.approveTask);

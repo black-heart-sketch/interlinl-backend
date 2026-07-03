@@ -1,5 +1,7 @@
 const User = require('../models/User');
 const Setting = require('../models/Setting');
+const ReferralCode = require('../models/ReferralCode');
+const Internship = require('../models/Internship');
 const bcrypt = require('bcryptjs');
 const generateToken = require('../utils/generateToken');
 const { moveFile } = require('../middleware/multer');
@@ -7,9 +9,11 @@ const path = require('path');
 const crypto = require('crypto');
 const { buildWebhookUrl, getTransactionStatus, initiatePayIn } = require('../utils/digipay');
 
+const normalizeReferralCode = (code = '') => String(code).trim().toUpperCase();
+
 const registerUser = async (req, res) => {
   try {
-    const { firstName, lastName, email, password, phone, class: classId, department } = req.body;
+    const { firstName, lastName, email, password, phone, class: classId, department, referralCode } = req.body;
 
     if (!firstName || !lastName || !email || !password) {
       return res.status(400).json({ message: 'All fields are required' });
@@ -28,6 +32,17 @@ const registerUser = async (req, res) => {
       return res.status(400).json({ message: 'User already exists' });
     }
 
+    const normalizedReferralCode = normalizeReferralCode(referralCode);
+    let matchedReferralCode = null;
+    if (!normalizedReferralCode) {
+      return res.status(400).json({ message: 'Referral code is required' });
+    }
+
+    matchedReferralCode = await ReferralCode.findOne({ code: normalizedReferralCode, isActive: true });
+    if (!matchedReferralCode) {
+      return res.status(400).json({ message: 'Invalid or inactive referral code' });
+    }
+
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
@@ -41,14 +56,23 @@ const registerUser = async (req, res) => {
       role: 'student',
       status: 'active',
       class: classId || null,
-      department: department || 'none'
+      department: department || 'none',
+      referralCode: matchedReferralCode?._id,
+      referralCodeSnapshot: matchedReferralCode?.code
     });
+
+    if (matchedReferralCode) {
+      matchedReferralCode.usageCount += 1;
+      matchedReferralCode.lastUsedAt = new Date();
+      await matchedReferralCode.save();
+    }
 
     res.status(201).json({
       _id: user._id,
       email: user.email,
       status: user.status,
       class: user.class,
+      referralCode: user.referralCodeSnapshot,
       message: 'Registration successful. Please log in to complete your onboarding.'
     });
   } catch (error) {
@@ -81,6 +105,7 @@ const loginUser = async (req, res) => {
         status: user.status,
         phone: user.phone,
         class: user.class,
+        platformAccessOverride: user.platformAccessOverride,
         token: generateToken(user._id)
       });
     } else {
@@ -174,10 +199,28 @@ const getRegistrationPaymentStatus = async (req, res) => {
 
     if (isCompleted) {
       const InternshipApplication = require('../models/InternshipApplication');
-      const app = await InternshipApplication.findOne({ transactionId });
-      if (app && app.paymentStatus !== 'paid') {
-        app.paymentStatus = 'paid';
+      const app = await InternshipApplication.findOne({ transactionId }).populate('user');
+      if (app) {
+        if (app.paymentStatus !== 'paid') app.paymentStatus = 'paid';
+        if (app.status !== 'approved') app.status = 'approved';
         await app.save();
+
+        if (app.user) {
+          app.user.status = 'active';
+          app.user.department = app.department;
+          await app.user.save();
+
+          const existingInternship = await Internship.findOne({ student: app.user._id });
+          if (!existingInternship) {
+            await Internship.create({
+              student: app.user._id,
+              department: app.department,
+              class: app.user.class || null,
+              status: 'active',
+              progress: 0
+            });
+          }
+        }
       }
     }
 

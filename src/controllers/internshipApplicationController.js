@@ -66,13 +66,13 @@ const approveApplication = async (req, res) => {
     }
 
     application.status = 'approved';
-    application.paymentStatus = 'paid'; // Manual approval overrides pending payments
     await application.save();
 
     // Activate the User account
     const user = application.user;
     if (user) {
       user.status = 'active';
+      user.platformAccessOverride = true;
       if (classId) user.class = classId;
       user.department = application.department;
       await user.save();

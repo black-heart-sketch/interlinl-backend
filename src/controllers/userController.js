@@ -1,4 +1,8 @@
 const User = require('../models/User');
+const InternshipApplication = require('../models/InternshipApplication');
+const Internship = require('../models/Internship');
+const Payment = require('../models/Payment');
+const Setting = require('../models/Setting');
 const bcrypt = require('bcryptjs');
 const { moveFile } = require('../middleware/multer');
 const path = require('path');
@@ -21,13 +25,69 @@ exports.getUsers = async (req, res) => {
 
 exports.validateUser = async (req, res) => {
   try {
-    const user = await User.findByIdAndUpdate(
-      req.params.id,
-      { status: 'active' },
-      { new: true }
-    ).select('-passwordHash');
+    const user = await User.findById(req.params.id).select('-passwordHash');
     if (!user) return res.status(404).json({ message: 'User not found' });
+
+    user.status = 'active';
+    user.platformAccessOverride = true;
+    await user.save();
+
+    const application = await InternshipApplication.findOne({ user: user._id });
+    if (application) {
+      application.status = 'approved';
+      await application.save();
+
+      const existingInternship = await Internship.findOne({ student: user._id });
+      if (!existingInternship) {
+        await Internship.create({
+          student: user._id,
+          department: application.department,
+          class: user.class || null,
+          status: 'active',
+          progress: 0
+        });
+      }
+    }
+
     res.status(200).json(user);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.getUserAccessSummary = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select('-passwordHash');
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const [application, internship, payments, feeSetting] = await Promise.all([
+      InternshipApplication.findOne({ user: user._id }).sort({ createdAt: -1 }),
+      Internship.findOne({ student: user._id }).populate('supervisor', 'firstName lastName email'),
+      Payment.find({ studentId: user._id, purpose: 'internship' }).sort({ createdAt: -1 }),
+      Setting.findOne({ key: 'internshipFee' })
+    ]);
+
+    const internshipFee = feeSetting ? Number(feeSetting.value) || 0 : 0;
+    const amountPaid = payments
+      .filter((payment) => payment.status === 'completed')
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    const pendingAmount = payments
+      .filter((payment) => payment.status === 'pending')
+      .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+
+    res.status(200).json({
+      user,
+      application,
+      internship,
+      internshipFee,
+      amountPaid,
+      pendingAmount,
+      remainingAmount: Math.max(0, internshipFee - amountPaid),
+      registrationPaid: application?.paymentStatus === 'paid',
+      manuallyValidated: Boolean(user.platformAccessOverride),
+      platformAccess: Boolean(user.platformAccessOverride || application?.status === 'approved'),
+      payments
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
