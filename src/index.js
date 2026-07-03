@@ -25,6 +25,10 @@ const User = require('./models/User');
 const translationService = require('./services/translationService');
 
 const dbEventEmitter = new EventEmitter();
+const parseEnvList = (value = '') => String(value)
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean);
 
 // Configuration
 const CONFIG = {
@@ -51,7 +55,11 @@ const CONFIG = {
       'http://13.60.239.54',
       'http://13.60.239.54:5002',
       'http://13.60.239.54:5003',
-      
+      'https://interiilink.com',
+      'https://www.interiilink.com',
+      'https://interlink.com',
+      'https://www.interlink.com',
+      ...parseEnvList(process.env.CORS_ORIGINS),
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization'],
@@ -205,7 +213,7 @@ class AppConfig {
         // Check if origin is explicitly allowed or fits local development pattern (localhost or 127.0.0.1 on any port)
         if (
           CONFIG.cors.origins.includes(origin) ||
-          /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+          /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
         ) {
           return callback(null, true);
         }
