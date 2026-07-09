@@ -1,9 +1,6 @@
-const { GoogleGenAI } = require('@google/genai');
+const aiService = require('./aiService');
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const GEMINI_RETRY_ATTEMPTS = Number(process.env.GEMINI_RETRY_ATTEMPTS || 3);
-
-let geminiClient;
 
 const logAIExam = (step, meta = {}) => {
   console.log(`[AI Exam Service] ${step}`, {
@@ -22,23 +19,6 @@ const logAIExamError = (step, error, meta = {}) => {
   });
 };
 
-const getGeminiClient = () => {
-  if (!process.env.GEMINI_API_KEY) {
-    logAIExam('Gemini client missing API key');
-    throw new Error('GEMINI_API_KEY is not configured.');
-  }
-
-  if (!geminiClient) {
-    logAIExam('Creating Gemini client', {
-      model: GEMINI_MODEL,
-      retryAttempts: GEMINI_RETRY_ATTEMPTS
-    });
-    geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  }
-
-  return geminiClient;
-};
-
 const extractValidJSON = (str) => {
   return String(str || '').replace(/```(?:json)?\s*([\s\S]*?)\s*```/, '$1').trim();
 };
@@ -52,35 +32,28 @@ const isRetryableGeminiError = (error) => {
 };
 
 const callGeminiJson = async ({ prompt, temperature = 0.25, maxOutputTokens = 8000 }) => {
-  logAIExam('Preparing Gemini JSON request', {
-    model: GEMINI_MODEL,
+  logAIExam('Preparing AI JSON request', {
     temperature,
     maxOutputTokens,
     promptLength: prompt.length,
     retryAttempts: GEMINI_RETRY_ATTEMPTS
   });
 
-  const ai = getGeminiClient();
-
   for (let attempt = 1; attempt <= GEMINI_RETRY_ATTEMPTS; attempt += 1) {
     const startedAt = Date.now();
-    logAIExam('Gemini request attempt started', {
+    logAIExam('AI request attempt started', {
       attempt,
       maxAttempts: GEMINI_RETRY_ATTEMPTS
     });
 
     try {
-      const response = await ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: prompt,
-        config: {
-          temperature,
-          maxOutputTokens,
-          responseMimeType: 'application/json'
-        }
+      const { text, provider } = await aiService.generateText({
+        prompt,
+        temperature,
+        maxOutputTokens,
+        jsonMode: true
       });
 
-      const text = response.text || '';
       const jsonText = extractValidJSON(text);
       logAIExam('Gemini request attempt succeeded', {
         attempt,

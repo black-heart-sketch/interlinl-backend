@@ -1,7 +1,7 @@
 const Report = require('../models/Report');
 const Internship = require('../models/Internship');
 const { moveFile } = require('../middleware/multer');
-const { GoogleGenAI } = require('@google/genai');
+const aiService = require('../services/aiService');
 const { createNotification } = require('../services/notificationService');
 const path = require('path');
 
@@ -59,20 +59,18 @@ const buildAttachmentPayload = async (processedFiles = []) => {
 };
 
 const getGeminiText = async (prompt) => {
-  if (!process.env.GEMINI_API_KEY) return null;
-
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const response = await ai.models.generateContent({
-    model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
-    contents: prompt,
-    config: {
+  try {
+    const { text } = await aiService.generateText({
+      prompt,
       temperature: 0.35,
       maxOutputTokens: 1200,
-      responseMimeType: 'application/json',
-    },
-  });
-
-  return response.text || null;
+      jsonMode: true,
+    });
+    return text || null;
+  } catch (err) {
+    console.error('Report AI generation error:', err);
+    return null;
+  }
 };
 
 const extractJson = (raw) => {

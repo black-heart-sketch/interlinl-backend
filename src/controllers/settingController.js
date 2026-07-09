@@ -26,6 +26,8 @@ const getSettings = async (req, res) => {
     const internshipInstallmentsSetting = await Setting.findOne({ key: 'internshipInstallments' });
     const apiKeySetting = await Setting.findOne({ key: 'digipayApiKey' });
     const envSetting = await Setting.findOne({ key: 'digipayEnv' });
+    const openRouterApiKeySetting = await Setting.findOne({ key: 'openRouterApiKey' });
+    const openRouterModelSetting = await Setting.findOne({ key: 'openRouterModel' });
 
     res.status(200).json({
       registrationFee: feeSetting ? Number(feeSetting.value) : 5000,
@@ -33,7 +35,9 @@ const getSettings = async (req, res) => {
       internshipFee: internshipFeeSetting ? Number(internshipFeeSetting.value) : 0,
       internshipInstallments: internshipInstallmentsSetting ? Math.max(1, Number(internshipInstallmentsSetting.value) || 1) : 1,
       digipayApiKey: apiKeySetting ? String(apiKeySetting.value) : '',
-      digipayEnv: envSetting ? String(envSetting.value) : 'production'
+      digipayEnv: envSetting ? String(envSetting.value) : 'production',
+      openRouterApiKey: openRouterApiKeySetting ? String(openRouterApiKeySetting.value) : '',
+      openRouterModel: openRouterModelSetting ? String(openRouterModelSetting.value) : 'google/gemini-2.5-flash'
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -42,7 +46,7 @@ const getSettings = async (req, res) => {
 
 const updateSettings = async (req, res) => {
   try {
-    const { registrationFee, requireOnlineRegistrationFee, internshipFee, internshipInstallments, digipayApiKey, digipayEnv } = req.body;
+    const { registrationFee, requireOnlineRegistrationFee, internshipFee, internshipInstallments, digipayApiKey, digipayEnv, openRouterApiKey, openRouterModel } = req.body;
 
     if (registrationFee !== undefined) {
       await Setting.findOneAndUpdate(
@@ -94,6 +98,22 @@ const updateSettings = async (req, res) => {
       await Setting.findOneAndUpdate(
         { key: 'digipayEnv' },
         { value: String(digipayEnv).trim() },
+        { upsert: true, new: true }
+      );
+    }
+
+    if (openRouterApiKey !== undefined) {
+      await Setting.findOneAndUpdate(
+        { key: 'openRouterApiKey' },
+        { value: String(openRouterApiKey).trim() },
+        { upsert: true, new: true }
+      );
+    }
+
+    if (openRouterModel !== undefined) {
+      await Setting.findOneAndUpdate(
+        { key: 'openRouterModel' },
+        { value: String(openRouterModel).trim() },
         { upsert: true, new: true }
       );
     }

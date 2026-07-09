@@ -1,7 +1,9 @@
 const Payment = require('../models/Payment');
 const Enrollment = require('../models/Enrollment');
 const Setting = require('../models/Setting');
-const { buildWebhookUrl, checkBalance, initiatePayIn, requestPayout } = require('../utils/digipay');
+const InternshipApplication = require('../models/InternshipApplication');
+const Internship = require('../models/Internship');
+const { buildWebhookUrl, checkBalance, getTransactionStatus, initiatePayIn, requestPayout } = require('../utils/digipay');
 
 const getInternshipFeeSettings = async () => {
   const [feeSetting, installmentsSetting] = await Promise.all([
@@ -23,8 +25,9 @@ const buildInternshipPaymentSummary = async (studentId) => {
   const amountPaid = completedPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
   const pendingAmount = pendingPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
   const remainingAmount = Math.max(0, internshipFee - amountPaid);
+  const maxPayableAmount = Math.max(0, remainingAmount - pendingAmount);
   const baseInstallment = internshipInstallments > 0 ? Math.ceil(internshipFee / internshipInstallments) : internshipFee;
-  const nextInstallmentAmount = remainingAmount > 0 ? Math.min(baseInstallment, remainingAmount) : 0;
+  const nextInstallmentAmount = maxPayableAmount > 0 ? Math.min(baseInstallment, maxPayableAmount) : 0;
 
   return {
     internshipFee,
@@ -32,10 +35,46 @@ const buildInternshipPaymentSummary = async (studentId) => {
     amountPaid,
     pendingAmount,
     remainingAmount,
+    maxPayableAmount,
     nextInstallmentAmount,
     completedInstallments: completedPayments.length,
     payments
   };
+};
+
+const normalizeGatewayStatus = (status) => {
+  const normalized = String(status || '').toLowerCase();
+  if (['completed', 'success', 'successful', 'paid'].includes(normalized)) return 'completed';
+  if (['failed', 'cancelled', 'canceled', 'expired'].includes(normalized)) return 'failed';
+  return 'pending';
+};
+
+const activateApplicationAfterPayment = async (application) => {
+  if (!application) return null;
+
+  application.paymentStatus = 'paid';
+  application.status = 'approved';
+  await application.save();
+
+  const user = await require('../models/User').findById(application.user);
+  if (user) {
+    user.status = 'active';
+    user.department = application.department;
+    await user.save();
+
+    const existingInternship = await Internship.findOne({ student: user._id });
+    if (!existingInternship) {
+      await Internship.create({
+        student: user._id,
+        department: application.department,
+        class: user.class || null,
+        status: 'active',
+        progress: 0
+      });
+    }
+  }
+
+  return application;
 };
 
 const createPayment = async (req, res) => {
@@ -63,6 +102,98 @@ const getPayments = async (req, res) => {
   }
 };
 
+const reconcilePendingPayments = async (req, res) => {
+  try {
+    const pendingPayments = await Payment.find({ status: 'pending', reference: { $exists: true, $ne: '' } });
+    const pendingApplications = await InternshipApplication.find({
+      paymentStatus: 'pending',
+      transactionId: { $exists: true, $ne: '' }
+    });
+
+    const results = [];
+
+    for (const payment of pendingPayments) {
+      let gatewayStatus = 'pending';
+      let checked = true;
+      try {
+        if (String(payment.reference).startsWith('dp_tx_')) {
+          gatewayStatus = 'completed';
+        } else {
+          const txn = await getTransactionStatus(payment.reference);
+          gatewayStatus = normalizeGatewayStatus(txn?.status);
+        }
+
+        if (gatewayStatus === 'completed') {
+          payment.status = 'completed';
+          await payment.save();
+        } else if (gatewayStatus === 'failed') {
+          payment.status = 'failed';
+          await payment.save();
+        }
+      } catch (error) {
+        checked = false;
+        gatewayStatus = 'check_failed';
+      }
+
+      results.push({
+        type: 'payment',
+        id: payment._id,
+        reference: payment.reference,
+        purpose: payment.purpose,
+        checked,
+        status: payment.status,
+        gatewayStatus
+      });
+    }
+
+    for (const application of pendingApplications) {
+      let gatewayStatus = 'pending';
+      let checked = true;
+      try {
+        if (String(application.transactionId).startsWith('dp_tx_')) {
+          gatewayStatus = 'completed';
+        } else {
+          const txn = await getTransactionStatus(application.transactionId);
+          gatewayStatus = normalizeGatewayStatus(txn?.status);
+        }
+
+        if (gatewayStatus === 'completed') {
+          await activateApplicationAfterPayment(application);
+        }
+      } catch (error) {
+        checked = false;
+        gatewayStatus = 'check_failed';
+      }
+
+      results.push({
+        type: 'registration',
+        id: application._id,
+        reference: application.transactionId,
+        checked,
+        status: application.paymentStatus,
+        applicationStatus: application.status,
+        gatewayStatus
+      });
+    }
+
+    const completed = results.filter((item) => item.gatewayStatus === 'completed').length;
+    const failed = results.filter((item) => item.gatewayStatus === 'failed').length;
+    const checkFailed = results.filter((item) => item.gatewayStatus === 'check_failed').length;
+
+    res.json({
+      message: `Checked ${results.length} pending payment record${results.length === 1 ? '' : 's'}.`,
+      checked: results.length,
+      completed,
+      failed,
+      checkFailed,
+      stillPending: results.length - completed - failed - checkFailed,
+      results
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const getMyInternshipPaymentSummary = async (req, res) => {
   try {
     const summary = await buildInternshipPaymentSummary(req.user._id);
@@ -84,7 +215,20 @@ const initiateInternshipInstallment = async (req, res) => {
       return res.status(400).json({ message: 'Your internship fee is already fully paid.' });
     }
 
-    const amount = summary.nextInstallmentAmount;
+    if (summary.maxPayableAmount <= 0) {
+      return res.status(400).json({ message: 'You already have pending payments covering the remaining fee.' });
+    }
+
+    const requestedAmount = Number(req.body.amount);
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
+      return res.status(400).json({ message: 'Enter a valid payment amount greater than 0 XAF.' });
+    }
+
+    const amount = Math.floor(requestedAmount);
+    if (amount > summary.maxPayableAmount) {
+      return res.status(400).json({ message: `Payment amount cannot exceed the remaining payable balance of ${summary.maxPayableAmount} XAF.` });
+    }
+
     const phone = req.body.phone || req.user.phone;
     if (!phone) {
       return res.status(400).json({ message: 'Phone number is required for Mobile Money payment.' });
@@ -136,6 +280,52 @@ const initiateInternshipInstallment = async (req, res) => {
     });
   } catch (error) {
     res.status(error.statusCode || 500).json({ message: error.message, details: error.rawResponse });
+  }
+};
+
+const recordManualInternshipPayment = async (req, res) => {
+  try {
+    const { studentId, amount, reference, note } = req.body;
+    if (!studentId) {
+      return res.status(400).json({ message: 'Student is required.' });
+    }
+
+    const summary = await buildInternshipPaymentSummary(studentId);
+    if (summary.internshipFee <= 0) {
+      return res.status(400).json({ message: 'Internship fee is not configured yet.' });
+    }
+    if (summary.remainingAmount <= 0) {
+      return res.status(400).json({ message: 'This student has already fully paid the internship fee.' });
+    }
+
+    const numericAmount = Math.floor(Number(amount));
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      return res.status(400).json({ message: 'Enter a valid amount greater than 0 XAF.' });
+    }
+    if (numericAmount > summary.remainingAmount) {
+      return res.status(400).json({ message: `Amount cannot exceed the remaining balance of ${summary.remainingAmount} XAF.` });
+    }
+
+    const payment = await Payment.create({
+      studentId,
+      purpose: 'internship',
+      amount: numericAmount,
+      currency: 'XAF',
+      method: 'cash',
+      status: 'completed',
+      reference: reference?.trim() || `manual_cash_${Date.now()}`,
+      installmentNumber: summary.completedInstallments + 1,
+      adminNote: note?.trim() || '',
+      recordedBy: req.user._id
+    });
+
+    res.status(201).json({
+      message: 'Manual internship payment recorded successfully.',
+      payment,
+      summary: await buildInternshipPaymentSummary(studentId)
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
   }
 };
 
@@ -269,6 +459,8 @@ module.exports = {
   getDigipayBalance,
   handleDigipayWebhook,
   initiateInternshipInstallment,
+  recordManualInternshipPayment,
+  reconcilePendingPayments,
   updatePayment,
   deletePayment
 };

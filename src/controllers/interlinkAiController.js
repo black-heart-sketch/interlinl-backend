@@ -1,4 +1,4 @@
-const { GoogleGenAI } = require('@google/genai');
+const aiService = require('../services/aiService');
 const AIInteraction = require('../models/AIInteraction');
 const Attendance = require('../models/Attendance');
 const Internship = require('../models/Internship');
@@ -6,16 +6,6 @@ const Report = require('../models/Report');
 const Task = require('../models/Task');
 const User = require('../models/User');
 const { createNotification } = require('../services/notificationService');
-
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-
-let geminiClient;
-
-const getGeminiClient = () => {
-  if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is not configured.');
-  if (!geminiClient) geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  return geminiClient;
-};
 
 const extractJson = (raw) => {
   const cleaned = String(raw || '').replace(/```(?:json)?\s*([\s\S]*?)\s*```/, '$1').trim();
@@ -39,18 +29,14 @@ const callAiJson = async ({ prompt, fallback, feature, user, maxOutputTokens = 1
   let error = '';
 
   try {
-    const ai = getGeminiClient();
-    const raw = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
-        temperature: 0.25,
-        maxOutputTokens,
-        responseMimeType: 'application/json',
-      },
+    const { text, provider: usedProvider } = await aiService.generateText({
+      prompt,
+      maxOutputTokens,
+      temperature: 0.25,
+      jsonMode: true
     });
-    response = extractJson(raw.text || '');
-    provider = 'gemini';
+    response = extractJson(text);
+    provider = usedProvider;
     status = 'success';
   } catch (err) {
     error = err.message;

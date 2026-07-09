@@ -8,6 +8,7 @@ router.post('/', protect, authorize('supervisor', 'admin', 'superadmin'), taskCo
 router.get('/:id', protect, taskController.getTaskById);
 router.patch('/:id', protect, authorize('supervisor', 'admin', 'superadmin'), taskController.updateTask);
 router.delete('/:id', protect, authorize('admin', 'superadmin'), taskController.deleteTask);
+router.post('/:id/assign-new-students', protect, authorize('supervisor', 'admin', 'superadmin'), taskController.assignExistingTaskToNewStudents);
 router.patch('/:id/start', protect, taskController.startTask);
 router.patch('/:id/submit', protect, taskController.submitTask);
 router.patch('/:id/approve', protect, authorize('supervisor', 'admin', 'superadmin'), taskController.approveTask);

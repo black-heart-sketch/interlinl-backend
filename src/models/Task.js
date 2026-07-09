@@ -4,11 +4,11 @@ const taskSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
     description: { type: String, required: true },
-    intern: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    intern: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    targetStudents: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     supervisor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     department: {
       type: String,
-      required: true,
       enum: ['Software Engineering', 'Cybersecurity', 'AI Development', 'IoT Engineering', 'Graphic Design', 'Web & Mobile Development']
     },
     priority: {
@@ -18,7 +18,7 @@ const taskSchema = new mongoose.Schema(
     },
     frequency: {
       type: String,
-      enum: ['daily', 'weekly', 'custom'],
+      enum: ['daily', 'weekly', 'monthly', 'custom'],
       default: 'daily'
     },
     assignmentScope: {
@@ -27,12 +27,21 @@ const taskSchema = new mongoose.Schema(
       default: 'individual'
     },
     assignmentBatchId: String,
+    period: {
+      day: Date,
+      weekStart: Date,
+      monthStart: Date,
+      year: Number,
+      week: Number,
+      month: Number
+    },
     status: {
       type: String,
       enum: ['pending', 'in_progress', 'submitted', 'completed', 'rejected'],
       default: 'pending'
     },
     deadline: Date,
+    notificationSentAt: Date,
     submissionNotes: String,
     submissionUrl: String,
     feedback: String,
